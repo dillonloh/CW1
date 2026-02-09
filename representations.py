@@ -130,8 +130,35 @@ def get_features(
     features = None
 
     ### YOUR CODE STARTS HERE ###
-    ### YOUR CODE ENDS HERE ###
+    print(len(dataset))
 
+    with torch.no_grad():
+        batch = []
+        feature_batches = []
+        for data in dataset: # iterate through the dataset
+            
+            if len(batch) < batch_size:
+                batch.append(data[0].cpu())
+            
+            if len(batch) == batch_size:
+                tensor_batch = torch.stack(batch)
+                feature = feature_extractor(tensor_batch.to(device)).cpu()
+                feature_batches.append(feature)
+                print(f"Processed {len(feature_batches)*batch_size} / {len(dataset)} samples", end='\r')
+                batch = []
+
+        # final batch 
+        tensor_batch = torch.stack(batch)
+        feature = feature_extractor(tensor_batch.to(device)).cpu()
+        feature_batches.append(feature)
+        
+        features = torch.cat(feature_batches, dim=0).cpu().numpy()
+        
+        print(features.shape)
+        print("Feature extraction completed.")
+
+    ### YOUR CODE ENDS HERE ###
+    
     return features, dataset.labels, dataset.num_classes
 
 
