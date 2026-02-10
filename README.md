@@ -7,3 +7,5 @@ scikit-learn
 gdown
 
 datasets
+
+einops
