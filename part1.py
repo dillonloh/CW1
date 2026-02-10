@@ -12,7 +12,7 @@ from representations import (
     visualize_features_tsne,
     train_linear_probe,
     train_finetune_probe,
-    # evaluate_linear,
+    evaluate_linear,
     # evaluate_finetune,
     plot_losses,
 )
@@ -71,20 +71,20 @@ else:
     for method_name in feature_extractors.keys():
         print(f"Training linear probe for {method_name}...")
         linear_probes[method_name], losses = train_linear_probe(
-            train_features_datasets[method_name], device=device
+            train_features_datasets[method_name], device=device, num_epochs=500
         )
         plot_losses(losses, method_name)
 
     # DILLON: pickle the models so i dont need to keep redoing this
     with open(os.path.join("models", "linear_probes.pkl"), "wb") as f:
         pickle.dump(linear_probes, f)
-        
 
-# # Evaluate linear probes on photo_val (implement evaluate_linear from scratch)
-# for method_name, probe in linear_probes.items():
-#     val_feats = FeaturesDataset.create("photo_val", feature_extractors[method_name], device=device)
-#     acc = evaluate_linear(probe, val_feats, device=device)
-#     print(f"{method_name} linear probe photo-val accuracy: {acc:.4f}")
+
+# Evaluate linear probes on photo_val (implement evaluate_linear from scratch)
+for method_name, probe in linear_probes.items():
+    val_feats = FeaturesDataset.create("photo_val", feature_extractors[method_name], device=device)
+    acc = evaluate_linear(probe, val_feats, device=device)
+    print(f"{method_name} linear probe photo-val accuracy: {acc:.4f}")
 
 # # Finetune probe training (init from linear probe)
 # finetuned_models = {}

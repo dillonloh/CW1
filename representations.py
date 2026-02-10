@@ -266,7 +266,31 @@ def train_linear_probe(
 
     return linear_probe, epoch_losses
 
+def evaluate_linear(
+    linear_probe: torch.nn.Module,
+    val_feats: FeaturesDataset,
+    device: str = "cuda:0",
+):
+    accuracy = 0.0
 
+    ### YOUR CODE STARTS HERE ###
+    
+    dataloader = DataLoader(val_feats, batch_size=100, num_workers=4)
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for x, y in dataloader:
+            yhat = linear_probe.forward(x.to(device)).cpu()
+            y_predicted = torch.argmax(yhat, dim=1)
+            y_correct = (y_predicted == y)
+            correct += y_correct.sum().item()
+            total += y_predicted.shape[0] 
+
+    accuracy = correct/total
+    print(f"Correct: {correct} / {total}")
+    ### YOUR CODE ENDS HERE ###
+
+    return accuracy
 def train_finetune_probe(
     split_name: str,
     feature_extractor: torch.nn.Module,
