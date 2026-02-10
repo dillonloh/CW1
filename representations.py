@@ -241,7 +241,7 @@ def train_linear_probe(
 
     linear_probe = MultinomialLogisticRegression(n_input_features=n_input_features, n_classes=n_classes).to(device)
     loss_fn = nn.CrossEntropyLoss()
-    optimiser = torch.optim.SGD(linear_probe.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimiser = torch.optim.Adam(linear_probe.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     dataloader = DataLoader(features_dataset, batch_size=batch_size, num_workers=num_workers)
 
@@ -257,7 +257,7 @@ def train_linear_probe(
 
             print(f"Epoch {n} / {num_epochs} | Batch {i} / {len(dataloader)} | Loss = {loss.item()}", end="\r")
 
-        epoch_loss = (running_loss/len(dataloader)).cpu()
+        epoch_loss = (running_loss/len(dataloader))
         print(f"Epoch {n} complete | Loss = {epoch_loss}")
         
         epoch_losses.append(epoch_loss)
