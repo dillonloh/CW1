@@ -16,6 +16,12 @@ from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 from tqdm.auto import tqdm
 
+# DILLON: for loading features
+from torch.utils.data import DataLoader
+
+# DILLON: seed for reproducibility
+torch.manual_seed(69)
+np.random.seed(69)
 
 BASE_DATA_PATH = Path(".") / "data"
 ZIP_PATH = BASE_DATA_PATH / "part1.zip"
@@ -130,33 +136,16 @@ def get_features(
     features = None
 
     ### YOUR CODE STARTS HERE ###
-    print(len(dataset))
+
+    batch_features = []
 
     with torch.no_grad():
-        batch = []
-        feature_batches = []
-        for data in dataset: # iterate through the dataset
-            
-            if len(batch) < batch_size:
-                batch.append(data[0].cpu())
-            
-            if len(batch) == batch_size:
-                tensor_batch = torch.stack(batch)
-                feature = feature_extractor(tensor_batch.to(device)).cpu()
-                feature_batches.append(feature)
-                print(f"Processed {len(feature_batches)*batch_size} / {len(dataset)} samples", end='\r')
-                batch = []
-
-        # final batch 
-        tensor_batch = torch.stack(batch)
-        feature = feature_extractor(tensor_batch.to(device)).cpu()
-        feature_batches.append(feature)
+        dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
+        for x, y in dataloader:
+            batch_features.append(feature_extractor(x.to(device)).cpu())
+            print(f"Extracted features for {len(batch_features)*batch_size} / {len(dataset)} samples", end="\r")
+        features = torch.cat(batch_features).cpu().numpy()
         
-        features = torch.cat(feature_batches, dim=0).cpu().numpy()
-        
-        print(features.shape)
-        print("Feature extraction completed.")
-
     ### YOUR CODE ENDS HERE ###
     
     return features, dataset.labels, dataset.num_classes
