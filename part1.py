@@ -58,14 +58,27 @@ for method_name in feature_extractors.keys():
         title=f"Features t-SNE ({method_name})"
     )
 
-# Linear probe training
-linear_probes = {}
-for method_name in feature_extractors.keys():
-    print(f"Training linear probe for {method_name}...")
-    linear_probes[method_name], losses = train_linear_probe(
-        train_features_datasets[method_name], device=device
-    )
-    plot_losses(losses, method_name)
+# DILLON: Check if training linear probes have already been pickled
+os.makedirs("models", exist_ok=True)
+if os.path.exists(os.path.join("models", "linear_probes.pkl")):
+    print("Linear probes previously trained")
+    with open(os.path.join("models", "linear_probes.pkl"), "rb") as f:
+        linear_probes = pickle.load(f)
+
+else: 
+    # Linear probe training
+    linear_probes = {}
+    for method_name in feature_extractors.keys():
+        print(f"Training linear probe for {method_name}...")
+        linear_probes[method_name], losses = train_linear_probe(
+            train_features_datasets[method_name], device=device
+        )
+        plot_losses(losses, method_name)
+
+    # DILLON: pickle the models so i dont need to keep redoing this
+    with open(os.path.join("models", "linear_probes.pkl"), "wb") as f:
+        pickle.dump(linear_probes, f)
+        
 
 # # Evaluate linear probes on photo_val (implement evaluate_linear from scratch)
 # for method_name, probe in linear_probes.items():

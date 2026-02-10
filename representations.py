@@ -206,19 +206,62 @@ def visualize_features_tsne(
     plt.close()
 
 
+class MultinomialLogisticRegression(nn.Module):
+    def __init__(self, n_input_features, n_classes):
+        super(MultinomialLogisticRegression, self).__init__()
+        self.linear = nn.Linear(in_features=n_input_features, out_features=n_classes)
+
+    def forward(self, x):
+
+        # single linear feed forward layer
+        x = self.linear(x)
+        output = torch.softmax(x, dim=1)
+
+        return output
+
+
 def train_linear_probe(
     features_dataset: FeaturesDataset,
     num_epochs: int = 32,
     batch_size: int = 512,
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-2,
-    num_workers: int = 4,
+    num_workers: int = 16,
     device: str = "cuda:0",
 ):
     linear_probe = None
     epoch_losses = []
 
     ### YOUR CODE STARTS HERE ###
+
+    print(f"Training on {device}")
+
+    n_input_features = features_dataset.features.shape[1]
+    n_classes = features_dataset.labels.max(axis=0) + 1
+
+    linear_probe = MultinomialLogisticRegression(n_input_features=n_input_features, n_classes=n_classes).to(device)
+    loss_fn = nn.CrossEntropyLoss()
+    optimiser = torch.optim.SGD(linear_probe.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    dataloader = DataLoader(features_dataset, batch_size=batch_size, num_workers=num_workers)
+
+    for n in range(num_epochs):
+        running_loss = 0
+        for i, (x, y) in enumerate(dataloader):
+            yhat = linear_probe.forward(x.to(device))
+            loss = loss_fn(yhat, y.to(device))
+            running_loss += loss.item()
+            loss.backward()
+            optimiser.step()
+            optimiser.zero_grad()
+
+            print(f"Epoch {n} / {num_epochs} | Batch {i} / {len(dataloader)} | Loss = {loss.item()}", end="\r")
+
+        epoch_loss = (running_loss/len(dataloader)).cpu()
+        print(f"Epoch {n} complete | Loss = {epoch_loss}")
+        
+        epoch_losses.append(epoch_loss)
+
     ### YOUR CODE ENDS HERE ###
 
     return linear_probe, epoch_losses
