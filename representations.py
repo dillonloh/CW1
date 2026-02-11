@@ -18,10 +18,20 @@ from tqdm.auto import tqdm
 
 # DILLON: for loading features
 from torch.utils.data import DataLoader
+import time
+ 
+# DILLON: import architectures
+from architectures import FinetuneProbeModel, MultinomialLogisticRegression
 
 # DILLON: seed for reproducibility
 torch.manual_seed(69)
 np.random.seed(69)
+
+# DILLON: workaround for tkinter crashes during multiprocessing of training
+# reference: https://stackoverflow.com/questions/27147300/matplotlib-tcl-asyncdelete-async-handler-deleted-by-the-wrong-thread
+# reference: https://github.com/matplotlib/matplotlib/issues/27713
+import matplotlib
+matplotlib.use('Agg')
 
 BASE_DATA_PATH = Path(".") / "data"
 ZIP_PATH = BASE_DATA_PATH / "part1.zip"
@@ -206,20 +216,6 @@ def visualize_features_tsne(
     plt.close()
 
 
-class MultinomialLogisticRegression(nn.Module):
-    def __init__(self, n_input_features, n_classes):
-        super(MultinomialLogisticRegression, self).__init__()
-        self.linear = nn.Linear(in_features=n_input_features, out_features=n_classes)
-
-    def forward(self, x):
-
-        # single linear feed forward layer
-        x = self.linear(x)
-        output = torch.softmax(x, dim=1)
-
-        return output
-
-
 def train_linear_probe(
     features_dataset: FeaturesDataset,
     num_epochs: int = 32,
@@ -231,6 +227,7 @@ def train_linear_probe(
 ):
     linear_probe = None
     epoch_losses = []
+    batch_losses = []
 
     ### YOUR CODE STARTS HERE ###
 
@@ -254,7 +251,7 @@ def train_linear_probe(
             loss.backward()
             optimiser.step()
             optimiser.zero_grad()
-
+            batch_losses.append(loss.item())
             print(f"Epoch {n} / {num_epochs} | Batch {i} / {len(dataloader)} | Loss = {loss.item()}", end="\r")
 
         epoch_loss = (running_loss/len(dataloader))
@@ -264,7 +261,7 @@ def train_linear_probe(
 
     ### YOUR CODE ENDS HERE ###
 
-    return linear_probe, epoch_losses
+    return linear_probe, epoch_losses, batch_losses
 
 def evaluate_linear(
     linear_probe: torch.nn.Module,
@@ -291,25 +288,109 @@ def evaluate_linear(
     ### YOUR CODE ENDS HERE ###
 
     return accuracy
+    
 def train_finetune_probe(
     split_name: str,
     feature_extractor: torch.nn.Module,
     pretrained_linear_probe: torch.nn.Module = None,
     num_epochs: int = 2,
-    batch_size: int = 32,
+    batch_size: int = 16, # changed from default 32 to 16 to save memory for local testing
     feature_lr: float = 1e-5,
     head_lr: float = 1e-3,
     weight_decay: float = 1e-4,
     num_workers: int = 4,
     device: str = "cuda:0",
+    freeze_norm_layers: bool = False,
 ):
+    
     ### YOUR CODE STARTS HERE ###
+
+    start_time = time.time()
+
+    dataset = FruitDataset(split_name, transform=feature_extractor.transform)
+    model = FinetuneProbeModel(feature_extractor=feature_extractor, linear_probe=pretrained_linear_probe).to(device)
+    
+    model.train()
+    
+    if freeze_norm_layers:
+        for module in model.modules():
+            for layer in module.modules():
+                if isinstance(layer, (nn.BatchNorm1d, nn.BatchNorm2d, nn.LayerNorm, nn.GroupNorm)):
+                    layer.eval()
+
+    loss_fn = nn.CrossEntropyLoss()
+
+    # Use SGD for both since they are already pretrained, and we want small updates
+    feature_optimiser = torch.optim.SGD(model.feature_extractor.parameters(), lr=feature_lr, weight_decay=weight_decay)
+    head_optimiser = torch.optim.SGD(model.linear_probe.parameters(), lr=head_lr, weight_decay=weight_decay)
+
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
+    
+    epoch_losses = []
+    batch_losses = []
+
+    for n in range(num_epochs):
+        running_loss = 0
+        for i, (x, y) in enumerate(dataloader):
+            yhat = model(x.to(device))
+            loss = loss_fn(yhat, y.to(device))
+            running_loss += loss.item()
+            loss.backward()
+
+            feature_optimiser.step()
+            head_optimiser.step()
+
+            feature_optimiser.zero_grad()
+            head_optimiser.zero_grad()
+            
+            batch_losses.append(loss.item())
+
+            print(f"Epoch {n} / {num_epochs} | Batch {i} / {len(dataloader)} | Loss = {loss.item()}")
+
+        epoch_loss = (running_loss/len(dataloader))
+        print(f"Epoch {n} complete | Loss = {epoch_loss}")
+        
+        epoch_losses.append(epoch_loss)
+
+    print(f"Training completed in {time.time() - start_time:.2f} seconds")
+
     ### YOUR CODE ENDS HERE ###
 
-    return model, epoch_losses
+    return model, epoch_losses, batch_losses
 
 
+def evaluate_finetune(
+    finetune_probe: torch.nn.Module,
+    split_name: str,
+    feature_extractor: nn.Module,
+    device: str = "cuda:0",
+    batch_size: int = 32,
+    num_workers: int = 4,
+    freeze_norm_layers: bool = False,
+):
+    accuracy = 0.0
 
+    ### YOUR CODE STARTS HERE ###
+    dataset = FruitDataset(split_name, transform=feature_extractor.transform)
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
+    
+    finetune_probe.eval()
+
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for x, y in dataloader:
+            yhat = finetune_probe.forward(x.to(device)).cpu()
+            y_predicted = torch.argmax(yhat, dim=1)
+            y_correct = (y_predicted == y)
+            correct += y_correct.sum().item()
+            total += y_predicted.shape[0] 
+
+    accuracy = correct/total
+    print(f"Correct: {correct} / {total}")
+    ### YOUR CODE ENDS HERE ###
+
+    return accuracy
 
 def plot_losses(losses, name):
     plt.figure(figsize=(8, 6))
