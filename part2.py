@@ -12,6 +12,9 @@ from pathlib import Path
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from DIT import DiT
 
+# DILLON: for saving model and losses
+import os
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -28,6 +31,12 @@ LR = 3e-4
 T = 500
 device = "cuda"
 
+# DILLON: added for part (b) conditional generation
+conditional = True
+
+# DILLON: seed for reproducibility
+torch.manual_seed(69)
+np.random.seed(69)
 
 # ============================================================================
 # DDPM UTILS
@@ -66,17 +75,22 @@ def sample_ddpm(net, T, bsz, betas, alphas, alphas_cumprod, num_snapshots=10): #
     snapshot_indices = torch.linspace(T - 1, 0, num_snapshots).long()
     snapshots = []
     
+    if conditional: # DILLON: modified for part (b) conditional generation
+        labels = torch.randint(0, 10, (bsz,), device=device)
+
     for t in reversed(range(T)):
 
         ### YOUR CODE STARTS HERE ###
         # Your code should compute xt at timestep t
         
-        
         a = 1 / torch.sqrt(alphas[t]).view(-1, 1, 1, 1)
         b = (1 - alphas[t]) / (torch.sqrt(1 - alphas_cumprod[t])).view(-1, 1, 1, 1)
 
         tensor_t = torch.tensor([t], device=device) # need be tensor otherwise DIT will complain about device not being attribute
-        c = net(x, tensor_t)
+        if conditional:
+            c = net(x, tensor_t, labels) # DILLON: modified for part (b) conditional generation
+        else:
+            c = net(x, tensor_t)
 
         d = torch.sqrt(betas[t]).view(-1, 1, 1, 1) # according to DDPM paper, this is one option for sigma_t
         
@@ -120,7 +134,10 @@ def visualize_forward_diffusion(dataloader, alphas_cumprod, n_steps=10):
     plt.figure(figsize=(15, 8))
     plt.imshow(grid.permute(1, 2, 0).numpy())
     plt.axis("off")
-    plt.savefig("images/forward_diffusion_process.png")
+    if conditional:
+        plt.savefig("conditional_images/forward_diffusion_process_conditional.png")
+    else:
+        plt.savefig("images/forward_diffusion_process.png")
     plt.show()
 
 
@@ -129,6 +146,7 @@ def visualize_forward_diffusion(dataloader, alphas_cumprod, n_steps=10):
 # ============================================================================
 if __name__ == "__main__":
     Path("images").mkdir(exist_ok=True)
+    Path("conditional_images").mkdir(exist_ok=True)
 
     # 1. Data Setup
     transform = transforms.Compose(
@@ -154,7 +172,7 @@ if __name__ == "__main__":
         depth=DEPTH,
         num_heads=HEADS,
         mlp_ratio=MLP_RATIO,
-        num_classes=0,
+        num_classes=(0 if not conditional else 10), # 10 because 0 - 9 digits
         learn_sigma=False,
     ).to(device)
     print(f"Parameters: {sum(p.numel() for p in net.parameters()):,}")
@@ -165,65 +183,97 @@ if __name__ == "__main__":
 
     # Visualize the forward process before training
     visualize_forward_diffusion(dataloader, alphas_cumprod)
+    
+    model_path = os.path.join("part2_models", "dit_mnist_final_conditional.pth" if conditional else "dit_mnist_final.pth")
 
-    # 3. Training Loop
-    print("Starting Training...")
-    loss_history = []
+    # DILLON: do this so i dont have to keep retraining
+    if os.path.exists(model_path):
+        print("Loading pre-trained model...")
+        net.load_state_dict(torch.load(model_path, map_location=device))
+        loss_history = np.load(os.path.join("part2_models", "loss_history_conditional.npy" if conditional else "loss_history.npy")).tolist()
+        print("Model loaded.")
 
-    for epoch in range(EPOCHS):
-        net.train()
-        epoch_loss = 0
-        for i, (images, _) in enumerate(dataloader):
-            images = images.to(device)
-            bsz = images.shape[0]
+    else:
+        # 3. Training Loop
+        print("Starting Training...")
+        loss_history = []
 
-            # Sample random timesteps
-            t = torch.randint(0, T, (bsz,), device=device).long()
+        print(f"Training {'conditional' if conditional else 'unconditional'} DiT Model...")
+        
+        for epoch in range(EPOCHS):
+            net.train()
+            epoch_loss = 0
+            for i, (images, labels) in enumerate(dataloader):
+                images = images.to(device)
+                bsz = images.shape[0]
 
-            # Add noise
-            xt, noise = forward_diffusion(images, t, alphas_cumprod)
+                # Sample random timesteps
+                t = torch.randint(0, T, (bsz,), device=device).long()
 
-            # Predict noise
-            pred_noise = net(xt, t)
+                # Add noise
+                xt, noise = forward_diffusion(images, t, alphas_cumprod)
 
-            # Use MSE loss
-            loss = nn.functional.mse_loss(pred_noise, noise)
+                # Predict noise
+                if conditional:
+                    # DILLON: modified for part (b) conditional generation
+                    pred_noise = net(xt, t, labels.to(device))
+                
+                else:
+                    pred_noise = net(xt, t)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # Use MSE loss
+                loss = nn.functional.mse_loss(pred_noise, noise)
 
-            epoch_loss += loss.item()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        avg_loss = epoch_loss / len(dataloader)
-        loss_history.append(avg_loss)
-        print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {avg_loss:.4f}")
+                epoch_loss += loss.item()
 
-        # Inside the training loop:
-        if (epoch + 5) % 5 == 0:
-            num_samples = 8
-            num_steps = 10  # How many steps of the process to show
+            avg_loss = epoch_loss / len(dataloader)
+            loss_history.append(avg_loss)
+            print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {avg_loss:.4f}")
 
-            # Generate the trajectory
-            # Shape: (num_steps, num_samples, C, H, W)
-            traj = sample_ddpm(
-                net, T, num_samples, betas, alphas, alphas_cumprod, num_steps
-            )
+            # Inside the training loop:
+            if (epoch + 5) % 5 == 0:
+                num_samples = 8
+                num_steps = 10  # How many steps of the process to show
 
-            grid_ready = einops.rearrange(traj, "s b c h w -> b s c h w")
-            grid_ready = einops.rearrange(grid_ready, "b s c h w -> (b s) c h w")
+                # Generate the trajectory
+                # Shape: (num_steps, num_samples, C, H, W)
+                traj = sample_ddpm(
+                    net, T, num_samples, betas, alphas, alphas_cumprod, num_steps
+                )
 
-            # Create the grid
-            grid = vutils.make_grid(
-                grid_ready, nrow=num_steps, normalize=True, value_range=(-1, 1)
-            )
+                grid_ready = einops.rearrange(traj, "s b c h w -> b s c h w")
+                grid_ready = einops.rearrange(grid_ready, "b s c h w -> (b s) c h w")
 
-            # Save the result
-            vutils.save_image(grid, f"images/evolution_epoch_{epoch+1}.png")
-            print(
-                f"Epoch {epoch+1}: Saved generation grid to images/evolution_epoch_{epoch+1}.png"
-            )
+                # Create the grid
+                grid = vutils.make_grid(
+                    grid_ready, nrow=num_steps, normalize=True, value_range=(-1, 1)
+                )
 
+                # Save the result
+                if conditional:
+                    vutils.save_image(grid, f"conditional_images/evolution_epoch_{epoch+1}_conditional.png")
+                    print(
+                        f"Epoch {epoch+1}: Saved generation grid to conditional_images/evolution_epoch_{epoch+1}_conditional.png"
+                    )
+                else:
+                    vutils.save_image(grid, f"images/evolution_epoch_{epoch+1}.png")    
+                    print(
+                        f"Epoch {epoch+1}: Saved generation grid to images/evolution_epoch_{epoch+1}.png"
+                    )
+
+        # DILLON: save the final model and losses
+        os.makedirs("part2_models", exist_ok=True)
+        if conditional:
+            torch.save(net.state_dict(), os.path.join("part2_models", "dit_mnist_final_conditional.pth"))
+            np.save(os.path.join("part2_models", "loss_history_conditional.npy"), np.array(loss_history))
+        else:
+            torch.save(net.state_dict(), os.path.join("part2_models", "dit_mnist_final.pth"))
+            np.save(os.path.join("part2_models", "loss_history.npy"), np.array(loss_history))
+        
     # 4. Final Sampling & Visualization
     print("Generating Final Samples...")
     trajectory = sample_ddpm(net, T, 16, betas, alphas, alphas_cumprod)
@@ -232,12 +282,20 @@ if __name__ == "__main__":
     final_grid = vutils.make_grid(
         trajectory[-1], nrow=4, normalize=True, value_range=(-1, 1)
     )
-    vutils.save_image(final_grid, "images/dit_mnist_final.png")
+    if conditional:
+        vutils.save_image(final_grid, "conditional_images/dit_mnist_final_conditional.png")
+    else:
+        vutils.save_image(final_grid, "images/dit_mnist_final.png")
 
     # Save Loss Plot
     plt.figure()
     plt.plot(loss_history)
     plt.title("Training Loss")
-    plt.savefig("images/loss_curve.png")
 
-    print("Done! Check the 'images' folder.")
+    if conditional:
+        plt.savefig("conditional_images/loss_curve_conditional.png")
+        print("Done! Check the 'conditional_images' folder.")
+
+    else:
+        plt.savefig("images/loss_curve.png")
+        print("Done! Check the 'images' folder.")
