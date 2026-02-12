@@ -44,6 +44,13 @@ def get_ddpm_schedule(T):
 def forward_diffusion(x0, t, alphas_cumprod):
     ### YOUR CODE STARTS HERE ###
     # Your code should compute xt at timestep t, and also return the noise
+    
+    mean_xt = torch.sqrt(alphas_cumprod[t]).view(-1, 1, 1, 1) * x0
+    var_xt = (1 - alphas_cumprod[t]).view(-1, 1, 1, 1)
+    noise = torch.randn(mean_xt.shape).to(device=device)
+    scaled_noise = torch.sqrt(var_xt) * noise
+    xt = mean_xt + scaled_noise
+
     ### YOUR CODE ENDS HERE ###
     return xt, noise
 
