@@ -56,7 +56,7 @@ def forward_diffusion(x0, t, alphas_cumprod):
 
 
 @torch.no_grad()
-def sample_ddpm(net, T, bsz, betas, alphas, alphas_cumprod, num_snapshots=10):
+def sample_ddpm(net, T, bsz, betas, alphas, alphas_cumprod, num_snapshots=10): # reverse process
     net.eval()
 
     # sample the initial noise
@@ -65,11 +65,28 @@ def sample_ddpm(net, T, bsz, betas, alphas, alphas_cumprod, num_snapshots=10):
     # Identify which timesteps to save for the visualization grid
     snapshot_indices = torch.linspace(T - 1, 0, num_snapshots).long()
     snapshots = []
-
+    
     for t in reversed(range(T)):
 
         ### YOUR CODE STARTS HERE ###
         # Your code should compute xt at timestep t
+        
+        
+        a = 1 / torch.sqrt(alphas[t]).view(-1, 1, 1, 1)
+        b = (1 - alphas[t]) / (torch.sqrt(1 - alphas_cumprod[t])).view(-1, 1, 1, 1)
+
+        tensor_t = torch.tensor([t], device=device) # need be tensor otherwise DIT will complain about device not being attribute
+        c = net(x, tensor_t)
+
+        d = torch.sqrt(betas[t]).view(-1, 1, 1, 1) # according to DDPM paper, this is one option for sigma_t
+        
+        if t == 0:
+            z = torch.zeros_like(x)
+        else:
+            z = torch.randn_like(x)
+        
+        x = a * (x - (b * c)) + (d * z)
+        
         ### YOUR CODE ENDS HERE ###
 
         if t in snapshot_indices:
